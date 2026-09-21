@@ -1,20 +1,42 @@
 export async function onRequestPost(context) {
   try {
-    // 1. 获取前端 POST 提交的数据
-    const data = await context.request.json();
+    // 1. 获取前端发来的 JSON 请求体
+    const { request, env } = context;
+    const body = await request.json();
 
-    // 2. 在这里编写写入数据库的逻辑
-    // 例如：连接 Cloudflare D1 数据库、KV，或 Fetch 请求外部数据库 API
-    // console.log("收到表单数据:", data);
+    const { name, email, phone, company, message } = body;
 
-    // 3. 返回成功响应给前端
-    return new Response(JSON.stringify({ success: true, message: "提交成功" }), {
-      headers: { "Content-Type": "application/json" }
-    });
+    // 2. 基础数据校验
+    if (!name || !email || !message) {
+      return new Response(
+        JSON.stringify({ ok: false, message: 'Missing required fields' }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // 3. 必须使用 await 执行 SQL 写入 D1
+    // 注意：假设你在 Cloudflare 后台设置的 D1 变量名叫 DB
+    const info = await env.DB.prepare(
+      `INSERT INTO inquiries (name, email, phone, company, message) VALUES (?, ?, ?, ?, ?)`
+    )
+    .bind(name, email, phone || '', company || '', message)
+    .run();
+
+    // 4. 确认写入成功后，返回带 ok: true 的响应给前端
+    if (info.success) {
+      return new Response(
+        JSON.stringify({ ok: true, reference: info.meta.last_row_id }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    } else {
+      throw new Error("D1 execution failed");
+    }
+
   } catch (err) {
-    return new Response(JSON.stringify({ error: err.message }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" }
-    });
+    // 捕获异常并给前端返回错误提示，避免前端误判为成功
+    return new Response(
+      JSON.stringify({ ok: false, message: err.message }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
+    );
   }
 }
